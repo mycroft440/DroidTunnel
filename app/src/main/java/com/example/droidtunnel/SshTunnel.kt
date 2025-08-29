@@ -15,10 +15,14 @@ import javax.net.ssl.SSLSocketFactory
 /**
  * Esta classe gere a ligação SSH. Ela será executada na sua própria thread.
  */
-class SshTunnel(private val config: TunnelConfig) : Runnable {
+class SshTunnel(
+    private val config: TunnelConfig,
+    private val listener: TunnelListener // Listener para notificar o VpnService
+) : Runnable {
 
     companion object {
         const val TAG = "SshTunnel"
+        const val SOCKS_PROXY_PORT = 10800 // Porta local para o nosso SOCKS proxy
     }
 
     private var session: Session? = null
@@ -32,21 +36,24 @@ class SshTunnel(private val config: TunnelConfig) : Runnable {
             session?.setPassword(config.sshPassword)
             session?.setConfig("StrictHostKeyChecking", "no")
 
-            // --- LÓGICA DO PROXY E PAYLOAD ---
-            // Se um proxy estiver definido, configuramo-lo antes de nos ligarmos.
             if (config.proxyHost.isNotBlank() && config.proxyPort.isNotBlank()) {
                 session?.setProxy(HttpProxy(config))
                 Log.d(TAG, "Proxy HTTP configurado para ${config.proxyHost}:${config.proxyPort}")
             }
 
-            Log.d(TAG, "A conectar-se ao servidor SSH através do proxy...")
-            session?.connect(30000) // Timeout de 30 segundos
+            Log.d(TAG, "A conectar-se ao servidor SSH...")
+            session?.connect(30000)
 
             if (session?.isConnected == true) {
                 Log.d(TAG, "Ligação SSH estabelecida com sucesso!")
 
-                // TODO: Lógica para encaminhar o tráfego da interface VPN através do túnel SSH.
-                // Esta é a próxima grande etapa.
+                // ATIVA O SOCKS PROXY (DYNAMIC PORT FORWARDING)
+                // Qualquer tráfego enviado para localhost:10800 será encaminhado pelo túnel.
+                session?.setPortForwardingD(SOCKS_PROXY_PORT)
+                Log.d(TAG, "Proxy SOCKS iniciado na porta $SOCKS_PROXY_PORT")
+
+                // Notifica o VpnService que estamos prontos para encaminhar o tráfego.
+                listener.onTunnelReady(SOCKS_PROXY_PORT)
 
                 while (!Thread.currentThread().isInterrupted && session?.isConnected == true) {
                     Thread.sleep(1000)
@@ -59,18 +66,15 @@ class SshTunnel(private val config: TunnelConfig) : Runnable {
         } finally {
             Log.d(TAG, "A fechar a ligação SSH.")
             session?.disconnect()
+            // Notifica o VpnService que o túnel foi fechado.
+            listener.onTunnelClosed()
         }
-    }
-
-    fun stop() {
-        Log.d(TAG, "A parar o túnel...")
-        session?.disconnect()
     }
 }
 
 
 /**
- * Classe personalizada para gerir a ligação Proxy HTTP, permitindo a injeção de payload e ligações SSL/TLS.
+ * Classe HttpProxy (SEM ALTERAÇÕES)
  */
 private class HttpProxy(private val config: TunnelConfig) : Proxy {
     private var socket: Socket? = null
@@ -79,38 +83,23 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
 
     override fun connect(socketFactory: SocketFactory?, host: String?, port: Int, timeout: Int) {
         try {
-            // 1. Cria o socket inicial para o proxy
             val plainSocket = socketFactory?.createSocket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
                 ?: Socket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
 
-            // 2. Verifica se é necessário envolvê-lo em SSL/TLS
             if (config.connectionType in listOf(SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL)) {
                 Log.d(SshTunnel.TAG, "A iniciar ligação SSL para ${config.proxyHost} com SNI: ${config.sni}")
-
                 val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
-                val sslSocket = sslFactory.createSocket(
-                    plainSocket,
-                    config.proxyHost,
-                    config.proxyPort.toIntOrNull() ?: 80,
-                    true // autoClose
-                ) as SSLSocket
-
-                // Define o SNI (Server Name Indication) se estiver preenchido
+                val sslSocket = sslFactory.createSocket(plainSocket, config.proxyHost, config.proxyPort.toIntOrNull() ?: 80, true) as SSLSocket
                 if (config.sni.isNotBlank()) {
-                    // Requer API 24+, que é o nosso minSdk
                     val params = sslSocket.sslParameters
                     params.serverNames = listOf(SNIHostName(config.sni))
                     sslSocket.sslParameters = params
                 }
-
                 Log.d(SshTunnel.TAG, "A iniciar handshake SSL...")
                 sslSocket.startHandshake()
                 Log.d(SshTunnel.TAG, "Handshake SSL concluído com sucesso.")
-
-                // Usa o socket SSL a partir de agora
                 this.socket = sslSocket
             } else {
-                // Usa o socket normal
                 this.socket = plainSocket
             }
 
@@ -118,15 +107,11 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
             inputStream = this.socket?.getInputStream()
             outputStream = this.socket?.getOutputStream()
 
-            // 3. Prepara e envia a payload (APENAS se aplicável)
             if (config.connectionType in listOf(SshConnectionType.SSHPROXY_PAYLOAD, SshConnectionType.SSHPROXY_PAYLOAD_SSL)) {
                 val processedPayload = processPayload(config.payload, config.sshHost, config.sshPort)
                 Log.d(SshTunnel.TAG, "Payload processada a ser enviada:\n$processedPayload")
-
                 outputStream?.write(processedPayload.toByteArray())
                 outputStream?.flush()
-
-                // Lê a resposta do proxy para confirmar que a payload foi aceite
                 val buffer = ByteArray(1024)
                 val bytesRead = inputStream?.read(buffer)
                 if (bytesRead != null && bytesRead > 0) {
@@ -139,17 +124,15 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
                     throw Exception("O Proxy não respondeu.")
                 }
             } else {
-                 Log.d(SshTunnel.TAG, "Ligação direta (SSL ou normal) estabelecida, a aguardar pelo SSH.")
+                Log.d(SshTunnel.TAG, "Ligação direta (SSL ou normal) estabelecida, a aguardar pelo SSH.")
             }
-
         } catch (e: Exception) {
             Log.e(SshTunnel.TAG, "Erro ao conectar-se ao proxy: ${e.message}", e)
-            close() // Garante que tudo é fechado em caso de erro
-            throw e // Lança a exceção para que a JSch saiba que falhou
+            close()
+            throw e
         }
     }
 
-    // Funções necessárias para a interface Proxy
     override fun getInputStream(): InputStream? = inputStream
     override fun getOutputStream(): OutputStream? = outputStream
     override fun getSocket(): Socket? = socket
@@ -159,16 +142,13 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
         socket?.close()
     }
 
-    /**
-     * Substitui os placeholders na payload pelos valores reais.
-     */
     private fun processPayload(payload: String, host: String, port: String): String {
         return payload
             .replace("[host_port]", "$host:$port")
             .replace("[ssh_host]", host)
             .replace("[ssh_port]", port)
             .replace("[crlf]", "\r\n")
-            .replace("\\r\\n", "\r\n") // Garante que as quebras de linha estão corretas
+            .replace("\\r\\n", "\r\n")
     }
 }
 
