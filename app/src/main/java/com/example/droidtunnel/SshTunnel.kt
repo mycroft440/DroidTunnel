@@ -2,9 +2,13 @@ package com.example.droidtunnel
 
 import android.util.Log
 import com.jcraft.jsch.JSch
+import com.jcraft.jsch.Proxy
 import com.jcraft.jsch.Session
+import com.jcraft.jsch.SocketFactory
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.Socket
+import javax.net.ssl.SSLSocketFactory
 
 /**
  * Esta classe gere a ligação SSH. Ela será executada na sua própria thread.
@@ -17,54 +21,119 @@ class SshTunnel(private val config: TunnelConfig) : Runnable {
 
     private var session: Session? = null
 
-    // Função principal que é executada quando a thread é iniciada.
     override fun run() {
         try {
             Log.d(TAG, "A iniciar a thread do túnel...")
 
-            // 1. Criar uma instância do JSch
             val jsch = JSch()
-
-            // 2. Obter a sessão com o servidor SSH
             session = jsch.getSession(config.sshUser, config.sshHost, config.sshPort.toIntOrNull() ?: 22)
             session?.setPassword(config.sshPassword)
-
-            // Desativa a verificação estrita da chave do anfitrião (NÃO RECOMENDADO PARA PRODUÇÃO, mas útil para testes)
             session?.setConfig("StrictHostKeyChecking", "no")
 
-            Log.d(TAG, "A conectar-se ao servidor SSH: ${config.sshHost}...")
+            // --- LÓGICA DO PROXY E PAYLOAD ---
+            // Se um proxy estiver definido, configuramo-lo antes de nos ligarmos.
+            if (config.proxyHost.isNotBlank() && config.proxyPort.isNotBlank()) {
+                session?.setProxy(HttpProxy(config))
+                Log.d(TAG, "Proxy HTTP configurado para ${config.proxyHost}:${config.proxyPort}")
+            }
+
+            Log.d(TAG, "A conectar-se ao servidor SSH através do proxy...")
             session?.connect(30000) // Timeout de 30 segundos
 
             if (session?.isConnected == true) {
                 Log.d(TAG, "Ligação SSH estabelecida com sucesso!")
 
-                // TODO: Lógica para ligar o túnel SSH ao proxy/payload e à interface VPN
-                // Esta é a parte mais complexa, onde os dados são lidos da interface VPN,
-                // processados e enviados através do túnel SSH, e vice-versa.
+                // TODO: Lógica para encaminhar o tráfego da interface VPN através do túnel SSH.
+                // Esta é a próxima grande etapa.
 
-                // Mantém a thread viva enquanto a ligação estiver ativa
-                while (Thread.currentThread().isInterrupted == false && session?.isConnected == true) {
-                    // O loop principal de encaminhamento de dados viria aqui.
-                    Thread.sleep(1000) // Apenas para manter a thread a correr por agora
+                while (!Thread.currentThread().isInterrupted && session?.isConnected == true) {
+                    Thread.sleep(1000)
                 }
-
             } else {
                 Log.e(TAG, "Falha ao estabelecer a ligação SSH.")
             }
-
         } catch (e: Exception) {
-            // Captura qualquer erro durante a ligação
             Log.e(TAG, "Erro na ligação SSH: ${e.message}", e)
         } finally {
-            // Garante que a ligação é sempre fechada
             Log.d(TAG, "A fechar a ligação SSH.")
             session?.disconnect()
         }
     }
 
-    // Função para parar a ligação de fora da thread.
     fun stop() {
         Log.d(TAG, "A parar o túnel...")
         session?.disconnect()
     }
 }
+
+
+/**
+ * Classe personalizada para gerir a ligação Proxy HTTP, permitindo a injeção de payload.
+ */
+private class HttpProxy(private val config: TunnelConfig) : Proxy {
+    private var socket: Socket? = null
+    private var inputStream: InputStream? = null
+    private var outputStream: OutputStream? = null
+
+    override fun connect(socketFactory: SocketFactory?, host: String?, port: Int, timeout: Int) {
+        try {
+            // Cria o socket para o servidor proxy
+            socket = socketFactory?.createSocket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
+                ?: Socket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
+            socket?.soTimeout = timeout
+
+            inputStream = socket?.getInputStream()
+            outputStream = socket?.getOutputStream()
+
+            // Prepara a payload, substituindo os placeholders
+            val processedPayload = processPayload(config.payload, config.sshHost, config.sshPort)
+            Log.d(SshTunnel.TAG, "Payload processada a ser enviada:\n$processedPayload")
+
+            // Envia a payload para o proxy
+            outputStream?.write(processedPayload.toByteArray())
+            outputStream?.flush()
+
+            // Lê a resposta do proxy para confirmar que o túnel foi estabelecido
+            // Uma implementação robusta leria até encontrar "HTTP/1.1 200" ou similar.
+            val buffer = ByteArray(1024)
+            val bytesRead = inputStream?.read(buffer)
+            if(bytesRead != null && bytesRead > 0) {
+                val response = String(buffer, 0, bytesRead)
+                Log.d(SshTunnel.TAG, "Resposta do Proxy:\n$response")
+                if (!response.contains(" 200 ")) {
+                   throw Exception("O Proxy recusou a ligação: $response")
+                }
+            } else {
+                 throw Exception("O Proxy não respondeu.")
+            }
+
+        } catch (e: Exception) {
+            Log.e(SshTunnel.TAG, "Erro ao conectar-se ao proxy: ${e.message}", e)
+            close() // Garante que tudo é fechado em caso de erro
+            throw e // Lança a exceção para que a JSch saiba que falhou
+        }
+    }
+
+    // Funções necessárias para a interface Proxy
+    override fun getInputStream(): InputStream? = inputStream
+    override fun getOutputStream(): OutputStream? = outputStream
+    override fun getSocket(): Socket? = socket
+    override fun close() {
+        inputStream?.close()
+        outputStream?.close()
+        socket?.close()
+    }
+
+    /**
+     * Substitui os placeholders na payload pelos valores reais.
+     */
+    private fun processPayload(payload: String, host: String, port: String): String {
+        return payload
+            .replace("[host_port]", "$host:$port")
+            .replace("[ssh_host]", host)
+            .replace("[ssh_port]", port)
+            .replace("[crlf]", "\r\n")
+            .replace("\\r\\n", "\r\n") // Garante que as quebras de linha estão corretas
+    }
+}
+
