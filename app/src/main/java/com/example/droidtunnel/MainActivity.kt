@@ -31,16 +31,14 @@ import androidx.compose.ui.unit.dp
 import com.example.droidtunnel.ui.theme.DroidTunnelTheme
 import kotlinx.coroutines.launch
 
-// --- ESTRUTURAS DE DADOS (sem alterações) ---
+// --- ESTRUTURAS DE DADOS ---
 
-// Enum para os tipos de conexão SSH
 enum class SshConnectionType(val displayName: String) {
     SSHPROXY_PAYLOAD("SSHPROXY+PAYLOAD"),
     SSHPROXY_PAYLOAD_SSL("SSHPROXY+PAYLOAD+SSL"),
     SSHPROXY_SSL("SSHPROXY + SSL")
 }
 
-// Data class para representar uma configuração de túnel
 data class TunnelConfig(
     val id: Int,
     val name: String,
@@ -51,7 +49,6 @@ data class TunnelConfig(
     val sni: String = ""
 )
 
-// Enum para controlar a navegação entre telas
 enum class Screen {
     Main,
     AddEditConfig
@@ -76,19 +73,12 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun DroidTunnelApp() {
-    // --- LÓGICA DE DADOS ---
     val context = LocalContext.current
-    // Instancia o nosso gestor de configurações. a palavra "remember" garante que ele não seja recriado desnecessariamente.
     val configManager = remember { ConfigManager(context) }
-
     var currentScreen by remember { mutableStateOf(Screen.Main) }
-
-    // Agora, o estado das configurações é inicializado a partir do que está guardado no dispositivo.
     val configurations = remember { mutableStateListOf<TunnelConfig>().apply { addAll(configManager.loadConfigs()) } }
-
     var selectedConfig by remember { mutableStateOf(configurations.firstOrNull()) }
 
-    // --- NAVEGAÇÃO ---
     when (currentScreen) {
         Screen.Main -> {
             MainScreen(
@@ -98,7 +88,7 @@ fun DroidTunnelApp() {
                 onAddConfig = { currentScreen = Screen.AddEditConfig },
                 onDeleteConfig = { configToDelete ->
                     configurations.remove(configToDelete)
-                    configManager.saveConfigs(configurations) // Guarda a lista atualizada
+                    configManager.saveConfigs(configurations)
                     if (selectedConfig == configToDelete) {
                         selectedConfig = configurations.firstOrNull()
                     }
@@ -110,7 +100,7 @@ fun DroidTunnelApp() {
                 onSave = { newConfig ->
                     val newId = (configurations.maxOfOrNull { it.id } ?: 0) + 1
                     configurations.add(newConfig.copy(id = newId))
-                    configManager.saveConfigs(configurations) // Guarda a lista atualizada
+                    configManager.saveConfigs(configurations)
                     currentScreen = Screen.Main
                 },
                 onBack = { currentScreen = Screen.Main }
@@ -127,9 +117,8 @@ fun MainScreen(
     selectedConfig: TunnelConfig?,
     onConfigSelected: (TunnelConfig) -> Unit,
     onAddConfig: () -> Unit,
-    onDeleteConfig: (TunnelConfig) -> Unit // Nova função para apagar
+    onDeleteConfig: (TunnelConfig) -> Unit
 ) {
-    // --- ESTADOS DA TELA PRINCIPAL (sem alterações) ---
     val sshCompressionState = remember { mutableStateOf(false) }
     val tcpNoDelayState = remember { mutableStateOf(true) }
     val keepAliveState = remember { mutableStateOf(true) }
@@ -176,7 +165,7 @@ fun MainScreen(
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
                     when (page) {
                         0 -> HomeScreen(selectedConfig, configurations, onConfigSelected)
-                        1 -> ConfigScreen(configurations, onAddConfig, onDeleteConfig) // Passa a função de apagar
+                        1 -> ConfigScreen(configurations, onAddConfig, onDeleteConfig)
                     }
                 }
             }
@@ -184,12 +173,11 @@ fun MainScreen(
     }
 }
 
-// --- TELA DE CONFIGURAÇÕES (agora com botão de apagar) ---
 @Composable
 fun ConfigScreen(
     configurations: List<TunnelConfig>,
     onAddConfig: () -> Unit,
-    onDeleteConfig: (TunnelConfig) -> Unit // Recebe a função para apagar
+    onDeleteConfig: (TunnelConfig) -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         if (configurations.isEmpty()) {
@@ -217,12 +205,6 @@ fun ConfigScreen(
     }
 }
 
-// --- RESTANTES COMPONENTES (AddEditConfigScreen, HomeScreen, etc.) ---
-// O código para as outras funções Composable permanece praticamente o mesmo,
-// uma vez que a lógica principal foi centralizada no DroidTunnelApp.
-// Cole o resto do código da versão anterior aqui se necessário.
-
-// --- TELA DE ADICIONAR/EDITAR CONFIGURAÇÃO ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditConfigScreen(
@@ -288,7 +270,6 @@ fun AddEditConfigScreen(
                 onTypeSelected = { selectedType = it }
             )
 
-            // --- CAMPOS CONDICIONAIS ---
             if (selectedType in listOf(SshConnectionType.SSHPROXY_PAYLOAD, SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
