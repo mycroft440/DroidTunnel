@@ -59,11 +59,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("com.google.code.gson:gson:2.10.1")
 
     // --- NOVA DEPENDÊNCIA ADICIONADA ---
-    // Biblioteca da Google para converter objetos para JSON e vice-versa.
-    // Essencial para guardar as nossas configurações.
-    implementation("com.google.code.gson:gson:2.10.1")
+    // Biblioteca para a ligação SSH.
+    implementation("com.jcraft:jsch:0.1.55")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
@@ -73,3 +73,4 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
