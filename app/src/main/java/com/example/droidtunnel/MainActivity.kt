@@ -33,11 +33,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.droidtunnel.ui.theme.DroidTunnelTheme
 import kotlinx.coroutines.launch
-import java.io.Serializable // Import necessário
+import java.io.Serializable
 
 // --- ESTRUTURAS DE DADOS ---
 
@@ -47,16 +48,22 @@ enum class SshConnectionType(val displayName: String) {
     SSHPROXY_SSL("SSHPROXY + SSL")
 }
 
-// ATUALIZAÇÃO: Adicionado "Serializable" para que o objeto possa ser passado para o serviço.
+// ATUALIZAÇÃO: Adicionados campos para os detalhes da ligação SSH
 data class TunnelConfig(
     val id: Int,
     val name: String,
+    // Detalhes SSH
+    val sshHost: String = "",
+    val sshPort: String = "22",
+    val sshUser: String = "",
+    val sshPassword: String = "",
+    // Detalhes do Proxy e Payload
     val connectionType: SshConnectionType = SshConnectionType.SSHPROXY_PAYLOAD,
     val proxyHost: String = "",
     val proxyPort: String = "",
     val payload: String = "",
     val sni: String = ""
-) : Serializable // Implementa a interface Serializable
+) : Serializable
 
 enum class Screen {
     Main,
@@ -80,25 +87,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// --- Funções para controlar o Serviço de VPN ---
-
-/**
- * Inicia o serviço de VPN.
- * @param context O contexto da aplicação.
- * @param config A configuração a ser utilizada para a conexão.
- */
 fun startVpnService(context: Context, config: TunnelConfig) {
     val intent = Intent(context, DroidTunnelVpnService::class.java).apply {
         action = "start"
-        putExtra("CONFIG", config) // Passa o objeto de configuração para o serviço
+        putExtra("CONFIG", config)
     }
     context.startService(intent)
 }
 
-/**
- * Pára o serviço de VPN.
- * @param context O contexto da aplicação.
- */
 fun stopVpnService(context: Context) {
     val intent = Intent(context, DroidTunnelVpnService::class.java).apply {
         action = "stop"
@@ -137,7 +133,6 @@ fun DroidTunnelApp() {
                     val newId = (configurations.maxOfOrNull { it.id } ?: 0) + 1
                     configurations.add(newConfig.copy(id = newId))
                     configManager.saveConfigs(configurations)
-                    // Define a configuração recém-criada como a selecionada
                     selectedConfig = configurations.last()
                     currentScreen = Screen.Main
                 },
@@ -157,7 +152,6 @@ fun MainScreen(
     onAddConfig: () -> Unit,
     onDeleteConfig: (TunnelConfig) -> Unit
 ) {
-    // A lógica da UI principal permanece a mesma
     val sshCompressionState = remember { mutableStateOf(false) }
     val tcpNoDelayState = remember { mutableStateOf(true) }
     val keepAliveState = remember { mutableStateOf(true) }
@@ -222,17 +216,14 @@ fun HomeScreen(
     var logs by remember { mutableStateOf("Bem-vindo ao DroidTunnel!\n") }
     val context = LocalContext.current
 
-    // --- LÓGICA DE PERMISSÃO DA VPN ---
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            // Permissão concedida, agora podemos iniciar a VPN
             logs += "Permissão de VPN concedida. A iniciar ligação...\n"
             selectedConfig?.let { startVpnService(context, it) }
             isConnected = true
         } else {
-            // Permissão negada
             logs += "Erro: Permissão de VPN negada pelo utilizador.\n"
         }
     }
@@ -244,19 +235,15 @@ fun HomeScreen(
             Button(
                 onClick = {
                     if (isConnected) {
-                        // Se estiver ligado, desliga
                         stopVpnService(context)
                         logs += "A parar ligação...\n"
                         isConnected = false
                     } else {
-                        // Se estiver desligado, tenta ligar
                         val vpnIntent = VpnService.prepare(context)
                         if (vpnIntent != null) {
-                            // Permissão necessária, lança o pedido
                             logs += "A solicitar permissão de VPN...\n"
                             vpnPermissionLauncher.launch(vpnIntent)
                         } else {
-                            // Permissão já concedida
                             logs += "A iniciar ligação com '${selectedConfig?.name}'...\n"
                             selectedConfig?.let { startVpnService(context, it) }
                             isConnected = true
@@ -267,7 +254,7 @@ fun HomeScreen(
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(containerColor = if (isConnected) Color(0xFF2E7D32) else Color(0xFFC62828)),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp),
-                enabled = selectedConfig != null // O botão só funciona se houver uma config selecionada
+                enabled = selectedConfig != null
             ) {
                 Text(text = if (isConnected) "LIGADO" else "DESLIGADO", style = MaterialTheme.typography.headlineMedium, color = Color.White, fontWeight = FontWeight.Bold)
             }
@@ -284,9 +271,6 @@ fun HomeScreen(
     }
 }
 
-
-// --- RESTANTE DO CÓDIGO (ConfigScreen, AddEditConfigScreen, etc.) ---
-// Nenhuma alteração necessária nestas funções, pode usar o código da versão anterior.
 @Composable
 fun ConfigScreen(
     configurations: List<TunnelConfig>,
@@ -326,6 +310,12 @@ fun AddEditConfigScreen(
     onBack: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
+    // SSH
+    var sshHost by remember { mutableStateOf("") }
+    var sshPort by remember { mutableStateOf("22") }
+    var sshUser by remember { mutableStateOf("") }
+    var sshPassword by remember { mutableStateOf("") }
+    // Proxy e Payload
     var selectedType by remember { mutableStateOf(SshConnectionType.SSHPROXY_PAYLOAD) }
     var proxyHost by remember { mutableStateOf("") }
     var proxyPort by remember { mutableStateOf("") }
@@ -346,7 +336,9 @@ fun AddEditConfigScreen(
                         if (name.isNotBlank()) {
                             onSave(
                                 TunnelConfig(
-                                    id = 0, name = name, connectionType = selectedType,
+                                    id = 0, name = name,
+                                    sshHost = sshHost, sshPort = sshPort, sshUser = sshUser, sshPassword = sshPassword,
+                                    connectionType = selectedType,
                                     proxyHost = proxyHost, proxyPort = proxyPort, payload = payload, sni = sni
                                 )
                             )
@@ -365,73 +357,43 @@ fun AddEditConfigScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            OutlinedTextField(
-                value = name,
-                onValue-change = { name = it },
-                label = { Text("Nome da Configuração") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = "SSH (Secure Shell)",
-                onValueChange = {},
-                label = { Text("Protocolo") },
-                readOnly = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            TypeSelector(
-                selectedType = selectedType,
-                onTypeSelected = { selectedType = it }
-            )
+            // --- CAMPOS GERAIS ---
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nome da Configuração") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            
+            // --- CAMPOS SSH ---
+            Text("Detalhes da Ligação SSH", style = MaterialTheme.typography.titleMedium)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = sshHost, onValueChange = { sshHost = it }, label = { Text("Servidor SSH") }, modifier = Modifier.weight(2f), singleLine = true)
+                OutlinedTextField(value = sshPort, onValueChange = { sshPort = it }, label = { Text("Porta") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+            }
+             OutlinedTextField(value = sshUser, onValueChange = { sshUser = it }, label = { Text("Utilizador") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+             OutlinedTextField(value = sshPassword, onValueChange = { sshPassword = it }, label = { Text("Senha") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation())
+            
+            Divider(modifier = Modifier.padding(vertical=8.dp))
+            
+            // --- CAMPOS PROXY/PAYLOAD ---
+            Text("Detalhes do Proxy/Payload", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(value = "SSH (Secure Shell)", onValueChange = {}, label = { Text("Protocolo") }, readOnly = true, modifier = Modifier.fillMaxWidth())
+            TypeSelector(selectedType = selectedType, onTypeSelected = { selectedType = it })
 
             if (selectedType in listOf(SshConnectionType.SSHPROXY_PAYLOAD, SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = proxyHost,
-                        onValue-change = { proxyHost = it },
-                        label = { Text("Proxy Remoto") },
-                        modifier = Modifier.weight(2f),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = proxyPort,
-                        onValueChange = { proxyPort = it },
-                        label = { Text("Porta") },
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, label = { Text("Proxy Remoto") }, modifier = Modifier.weight(2f), singleLine = true)
+                    OutlinedTextField(value = proxyPort, onValueChange = { proxyPort = it }, label = { Text("Porta") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                 }
             }
-
             if (selectedType in listOf(SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL)) {
-                OutlinedTextField(
-                    value = sni,
-                    onValueChange = { sni = it },
-                    label = { Text("SNI (Server Name Indication)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+                OutlinedTextField(value = sni, onValueChange = { sni = it }, label = { Text("SNI (Server Name Indication)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             }
-
             if (selectedType in listOf(SshConnectionType.SSHPROXY_PAYLOAD, SshConnectionType.SSHPROXY_PAYLOAD_SSL)) {
-                OutlinedTextField(
-                    value = payload,
-                    onValueChange = { payload = it },
-                    label = { Text("Payload") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp),
-                    maxLines = 5
-                )
+                OutlinedTextField(value = payload, onValueChange = { payload = it }, label = { Text("Payload") }, modifier = Modifier.fillMaxWidth().height(150.dp), maxLines = 5)
             }
         }
     }
 }
 
+// --- RESTANTE DO CÓDIGO (TypeSelector, AppDrawerContent, etc.) ---
+// Nenhuma alteração necessária nestas funções, pode usar o código da versão anterior.
 @Composable
 fun TypeSelector(
     selectedType: SshConnectionType,
