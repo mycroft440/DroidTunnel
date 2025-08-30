@@ -12,17 +12,18 @@ import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
-/**
- * Esta classe gere a ligação SSH. Ela será executada na sua própria thread.
- */
 class SshTunnel(
     private val config: TunnelConfig,
-    private val listener: TunnelListener // Listener para notificar o VpnService
+    private val listener: TunnelListener,
+    // Novos parâmetros para as opções avançadas
+    private val useCompression: Boolean,
+    private val useTcpNoDelay: Boolean,
+    private val useKeepAlive: Boolean
 ) : Runnable {
 
     companion object {
         const val TAG = "SshTunnel"
-        const val SOCKS_PROXY_PORT = 10800 // Porta local para o nosso SOCKS proxy
+        const val SOCKS_PROXY_PORT = 10800
     }
 
     private var session: Session? = null
@@ -36,6 +37,23 @@ class SshTunnel(
             session?.setPassword(config.sshPassword)
             session?.setConfig("StrictHostKeyChecking", "no")
 
+            // --- APLICA AS NOVAS OPÇÕES AQUI ---
+            if (useTcpNoDelay) {
+                session?.setConfig("TCP_NODELAY", "yes")
+                Log.d(TAG, "TCP NoDelay ativado.")
+            }
+            if (useKeepAlive) {
+                // Envia um pacote para manter a ligação viva a cada 30 segundos
+                session?.serverAliveInterval = 30 * 1000
+                Log.d(TAG, "KeepAlive ativado (intervalo de 30s).")
+            }
+            if (useCompression) {
+                // Ativa a compressão zlib
+                session?.setConfig("compression.s2c", "zlib@openssh.com,zlib,none")
+                session?.setConfig("compression.c2s", "zlib@openssh.com,zlib,none")
+                Log.d(TAG, "Compressão SSH ativada.")
+            }
+
             if (config.proxyHost.isNotBlank() && config.proxyPort.isNotBlank()) {
                 session?.setProxy(HttpProxy(config))
                 Log.d(TAG, "Proxy HTTP configurado para ${config.proxyHost}:${config.proxyPort}")
@@ -46,13 +64,8 @@ class SshTunnel(
 
             if (session?.isConnected == true) {
                 Log.d(TAG, "Ligação SSH estabelecida com sucesso!")
-
-                // ATIVA O SOCKS PROXY (DYNAMIC PORT FORWARDING)
-                // Qualquer tráfego enviado para localhost:10800 será encaminhado pelo túnel.
                 session?.setPortForwardingD(SOCKS_PROXY_PORT)
                 Log.d(TAG, "Proxy SOCKS iniciado na porta $SOCKS_PROXY_PORT")
-
-                // Notifica o VpnService que estamos prontos para encaminhar o tráfego.
                 listener.onTunnelReady(SOCKS_PROXY_PORT)
 
                 while (!Thread.currentThread().isInterrupted && session?.isConnected == true) {
@@ -66,16 +79,12 @@ class SshTunnel(
         } finally {
             Log.d(TAG, "A fechar a ligação SSH.")
             session?.disconnect()
-            // Notifica o VpnService que o túnel foi fechado.
             listener.onTunnelClosed()
         }
     }
 }
 
-
-/**
- * Classe HttpProxy (SEM ALTERAÇÕES)
- */
+// --- Classe HttpProxy (sem alterações) ---
 private class HttpProxy(private val config: TunnelConfig) : Proxy {
     private var socket: Socket? = null
     private var inputStream: InputStream? = null
