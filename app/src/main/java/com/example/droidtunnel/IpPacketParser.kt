@@ -51,7 +51,6 @@ object IpPacketParser {
 
         return if (transportHeader != null) {
             val data = if (byteBuffer.hasRemaining()) byteBuffer.slice() else ByteBuffer.allocate(0)
-            // Guarda o cabeçalho completo (IP + TCP/UDP)
             val originalHeader = ByteBuffer.wrap(buffer, 0, byteBuffer.position())
             Packet(ipHeader, transportHeader, data, originalHeader)
         } else {
@@ -63,7 +62,6 @@ object IpPacketParser {
         if (buffer.remaining() < TCP_HEADER_SIZE) return null
         val sourcePort = buffer.getShort().toInt() and 0xFFFF
         val destPort = buffer.getShort().toInt() and 0xFFFF
-        // Pula o resto do cabeçalho TCP para chegar aos dados
         buffer.position(buffer.position() + TCP_HEADER_SIZE - 4)
         return object : Packet.TransportHeader {
             override val sourcePort: Int = sourcePort
@@ -85,20 +83,16 @@ object IpPacketParser {
         val originalHeader = originalPacket.originalHeader.duplicate()
         val totalLength = originalHeader.limit() + data.size
         
-        // Troca os endereços de origem e destino
         originalHeader.position(12)
         originalHeader.put(originalPacket.ipHeader.destinationAddress.address)
         originalHeader.put(originalPacket.ipHeader.sourceAddress.address)
         
-        // Atualiza o comprimento total do pacote
         originalHeader.putShort(2, totalLength.toShort())
         
-        // Recalcula o checksum do cabeçalho IP
-        originalHeader.putShort(10, 0) // Zera o checksum antes de calcular
+        originalHeader.putShort(10, 0)
         val checksum = calculateChecksum(originalHeader.array(), 0, IPV4_HEADER_SIZE)
         originalHeader.putShort(10, checksum.toShort())
         
-        // Combina o cabeçalho modificado com os novos dados
         val newPacket = ByteArray(totalLength)
         System.arraycopy(originalHeader.array(), 0, newPacket, 0, originalHeader.limit())
         System.arraycopy(data, 0, newPacket, originalHeader.limit(), data.size)
