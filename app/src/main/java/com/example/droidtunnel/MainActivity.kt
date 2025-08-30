@@ -38,6 +38,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.example.droidtunnel.ui.theme.DroidTunnelTheme
 import kotlinx.coroutines.launch
 import java.io.Serializable
+import kotlin.math.roundToInt
 
 // --- ESTRUTURAS DE DADOS ---
 
@@ -90,7 +91,8 @@ fun startVpnService(
     useCompression: Boolean,
     useTcpNoDelay: Boolean,
     useKeepAlive: Boolean,
-    useAutoReconnect: Boolean
+    useAutoReconnect: Boolean,
+    mtu: Int // <-- NOVO PARÂMETRO
 ) {
     val intent = Intent(context, DroidTunnelVpnService::class.java).apply {
         action = "start"
@@ -99,6 +101,7 @@ fun startVpnService(
         putExtra("USE_TCP_NO_DELAY", useTcpNoDelay)
         putExtra("USE_KEEP_ALIVE", useKeepAlive)
         putExtra("USE_AUTO_RECONNECT", useAutoReconnect)
+        putExtra("MTU", mtu) // <-- ADICIONADO AO INTENT
     }
     context.startService(intent)
 }
@@ -182,7 +185,8 @@ fun MainScreen(
     val sshCompressionState = remember { mutableStateOf(false) }
     val tcpNoDelayState = remember { mutableStateOf(true) }
     val keepAliveState = remember { mutableStateOf(true) }
-    val autoReconnectState = remember { mutableStateOf(true) } // <-- NOVO ESTADO
+    val autoReconnectState = remember { mutableStateOf(true) }
+    val mtuState = remember { mutableStateOf(1400) } // <-- NOVO ESTADO PARA O MTU
 
     var vpnState by remember { mutableStateOf(DroidTunnelVpnService.currentState) }
     var logs by remember { mutableStateOf("Bem-vindo ao DroidTunnel!\n") }
@@ -198,7 +202,7 @@ fun MainScreen(
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             selectedConfig?.let {
-                startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value, autoReconnectState.value)
+                startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value, autoReconnectState.value, mtuState.value)
             }
         } else {
             logs += "Erro: Permissão de VPN negada pelo utilizador.\n"
@@ -237,8 +241,10 @@ fun MainScreen(
                 onTcpNoDelayChange = { tcpNoDelayState.value = it },
                 keepAlive = keepAliveState.value,
                 onKeepAliveChange = { keepAliveState.value = it },
-                autoReconnect = autoReconnectState.value, // <-- NOVO PARÂMETRO
-                onAutoReconnectChange = { autoReconnectState.value = it } // <-- NOVO PARÂMETRO
+                autoReconnect = autoReconnectState.value,
+                onAutoReconnectChange = { autoReconnectState.value = it },
+                mtu = mtuState.value, // <-- PASSADO PARA O DRAWER
+                onMtuChange = { mtuState.value = it } // <-- PASSADO PARA O DRAWER
             )
         }
     ) {
@@ -282,7 +288,7 @@ fun MainScreen(
                                         vpnPermissionLauncher.launch(vpnIntent)
                                     } else {
                                         selectedConfig?.let {
-                                            startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value, autoReconnectState.value)
+                                            startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value, autoReconnectState.value, mtuState.value)
                                         }
                                     }
                                 }
@@ -310,7 +316,7 @@ fun HomeScreen(
     val (buttonColor, buttonText) = when (vpnState) {
         VpnState.CONNECTED -> Color(0xFF2E7D32) to "LIGADO"
         VpnState.CONNECTING -> Color(0xFFF9A825) to "A LIGAR..."
-        VpnState.RECONNECTING -> Color(0xFFFFA000) to "A RECONECTAR" // <-- NOVO ESTADO NA UI
+        VpnState.RECONNECTING -> Color(0xFFFFA000) to "A RECONECTAR"
         else -> Color(0xFFC62828) to "DESLIGADO"
     }
     
@@ -513,7 +519,8 @@ fun AppDrawerContent(
     sshCompression: Boolean, onSshCompressionChange: (Boolean) -> Unit,
     tcpNoDelay: Boolean, onTcpNoDelayChange: (Boolean) -> Unit,
     keepAlive: Boolean, onKeepAliveChange: (Boolean) -> Unit,
-    autoReconnect: Boolean, onAutoReconnectChange: (Boolean) -> Unit // <-- NOVOS PARÂMETROS
+    autoReconnect: Boolean, onAutoReconnectChange: (Boolean) -> Unit,
+    mtu: Int, onMtuChange: (Int) -> Unit // <-- NOVOS PARÂMETROS
 ) {
     ModalDrawerSheet {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -521,7 +528,17 @@ fun AppDrawerContent(
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = sshCompression, onCheckedChange = onSshCompressionChange); Text("Compressão SSH") }
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = tcpNoDelay, onCheckedChange = onTcpNoDelayChange); Text("TCP No Delay") }
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = keepAlive, onCheckedChange = onKeepAliveChange); Text("KeepAlive") }
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = autoReconnect, onCheckedChange = onAutoReconnectChange); Text("Reconexão Automática") } // <-- NOVA CHECKBOX
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = autoReconnect, onCheckedChange = onAutoReconnectChange); Text("Reconexão Automática") }
+            
+            // --- NOVO SLIDER DE MTU ---
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Ajuste de MTU: $mtu", style = MaterialTheme.typography.bodyLarge)
+            Slider(
+                value = mtu.toFloat(),
+                onValueChange = { onMtuChange(it.roundToInt()) },
+                valueRange = 1280f..1500f,
+                steps = (1500 - 1280) / 10 - 1 // Passos de 10 em 10
+            )
         }
     }
 }
