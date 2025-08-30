@@ -7,60 +7,67 @@ import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 class NatManager(private val vpnService: DroidTunnelVpnService, private val socksPort: Int) {
-    // Agora, guardamos o pacote original que iniciou a sessão para construir a resposta
+
     private val sessions = ConcurrentHashMap<String, Pair<SocketChannel, Packet>>()
+    private val executor = Executors.newCachedThreadPool()
 
     fun handlePacket(packet: Packet, vpnOutput: FileOutputStream) {
         val destAddress = packet.ipHeader.destinationAddress
         val destPort = packet.transportHeader.destinationPort
-        val sessionKey = "${destAddress.hostAddress}:$destPort:${packet.transportHeader.sourcePort}"
+        // Cria uma chave única para a sessão usando origem e destino
+        val sessionKey = "${packet.ipHeader.sourceAddress.hostAddress}:${packet.transportHeader.sourcePort}-${destAddress.hostAddress}:$destPort"
 
         var channel = sessions[sessionKey]?.first
         if (channel == null || !channel.isConnected) {
             try {
                 channel = SocketChannel.open()
-                vpnService.protect(channel.socket())
+                vpnService.protect(channel.socket()) // Protege o socket para não ser encaminhado pela própria VPN
                 channel.connect(InetSocketAddress("127.0.0.1", socksPort))
                 
-                // Guarda o canal E o pacote original
                 sessions[sessionKey] = Pair(channel, packet)
 
-                // Inicia a thread para ler as respostas do túnel
-                Thread {
+                // Inicia uma nova thread para ler as respostas do túnel para esta sessão
+                executor.submit {
                     val buffer = ByteBuffer.allocate(32767)
                     try {
                         while (channel.read(buffer) > 0) {
                             buffer.flip()
-                            // Constrói o pacote de resposta usando o pacote original
-                            val responsePacketBuffer = IpPacketParser.buildResponsePacket(packet, buffer)
+                            val responseData = ByteArray(buffer.remaining())
+                            buffer.get(responseData)
                             
-                            // Escreve a resposta de volta na interface da VPN
+                            // Constrói o pacote de resposta usando o pacote original
+                            val responsePacket = IpPacketParser.buildIpPacket(packet, responseData)
+                            
+                            // Escreve a resposta de volta na interface da VPN de forma segura
                             synchronized(vpnOutput) {
-                                vpnOutput.write(responsePacketBuffer.array(), 0, responsePacketBuffer.limit())
+                                vpnOutput.write(responsePacket)
                             }
                             buffer.clear()
                         }
                     } catch (e: IOException) {
-                        Log.w("NatManager", "Sessão fechada: $sessionKey")
+                        Log.w("NatManager", "Sessão fechada para $sessionKey: ${e.message}")
                     } finally {
                         sessions.remove(sessionKey)
                         channel.close()
                     }
-                }.start()
+                }
 
             } catch (e: IOException) {
-                Log.e("NatManager", "Erro ao criar sessão: $sessionKey", e)
+                Log.e("NatManager", "Erro ao criar sessão para $sessionKey", e)
                 return
             }
         }
         
         try {
             // Escreve os dados do pacote de saída para o túnel
-            channel.write(packet.data)
+            if (packet.data.hasRemaining()) {
+                channel.write(packet.data)
+            }
         } catch (e: IOException) {
-            Log.e("NatManager", "Erro ao escrever na sessão: $sessionKey", e)
+            Log.e("NatManager", "Erro ao escrever na sessão $sessionKey", e)
             sessions.remove(sessionKey)
             channel.close()
         }
