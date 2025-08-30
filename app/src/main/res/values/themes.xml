@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Tema base da aplicação.
+      Este tema é usado pela splash screen e pelo sistema Android antes da UI do Compose ser desenhada.
+      O parent `Theme.Material3.DayNight.NoActionBar` é um bom padrão para apps com Compose
+      que usam Material 3.
+    -->
+    <style name="Theme.DroidTunnel" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Você pode adicionar personalizações de cores da barra de status, etc., aqui se necessário -->
+    </style>
+</resources>
