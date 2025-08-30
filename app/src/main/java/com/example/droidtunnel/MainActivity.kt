@@ -89,7 +89,8 @@ fun startVpnService(
     config: TunnelConfig,
     useCompression: Boolean,
     useTcpNoDelay: Boolean,
-    useKeepAlive: Boolean
+    useKeepAlive: Boolean,
+    useAutoReconnect: Boolean
 ) {
     val intent = Intent(context, DroidTunnelVpnService::class.java).apply {
         action = "start"
@@ -97,6 +98,7 @@ fun startVpnService(
         putExtra("USE_COMPRESSION", useCompression)
         putExtra("USE_TCP_NO_DELAY", useTcpNoDelay)
         putExtra("USE_KEEP_ALIVE", useKeepAlive)
+        putExtra("USE_AUTO_RECONNECT", useAutoReconnect)
     }
     context.startService(intent)
 }
@@ -180,8 +182,8 @@ fun MainScreen(
     val sshCompressionState = remember { mutableStateOf(false) }
     val tcpNoDelayState = remember { mutableStateOf(true) }
     val keepAliveState = remember { mutableStateOf(true) }
-    
-    // Estado da VPN e logs, agora controlados por broadcasts do serviço.
+    val autoReconnectState = remember { mutableStateOf(true) } // <-- NOVO ESTADO
+
     var vpnState by remember { mutableStateOf(DroidTunnelVpnService.currentState) }
     var logs by remember { mutableStateOf("Bem-vindo ao DroidTunnel!\n") }
     
@@ -191,20 +193,18 @@ fun MainScreen(
     val tabs = listOf("Início", "Configurações")
     val pagerState = rememberPagerState(pageCount = { tabs.size })
 
-    // Listener para o resultado do pedido de permissão de VPN
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             selectedConfig?.let {
-                startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value)
+                startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value, autoReconnectState.value)
             }
         } else {
             logs += "Erro: Permissão de VPN negada pelo utilizador.\n"
         }
     }
 
-    // Configura o BroadcastReceiver para ouvir atualizações do VpnService
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -227,7 +227,6 @@ fun MainScreen(
         }
     }
 
-
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -237,7 +236,9 @@ fun MainScreen(
                 tcpNoDelay = tcpNoDelayState.value,
                 onTcpNoDelayChange = { tcpNoDelayState.value = it },
                 keepAlive = keepAliveState.value,
-                onKeepAliveChange = { keepAliveState.value = it }
+                onKeepAliveChange = { keepAliveState.value = it },
+                autoReconnect = autoReconnectState.value, // <-- NOVO PARÂMETRO
+                onAutoReconnectChange = { autoReconnectState.value = it } // <-- NOVO PARÂMETRO
             )
         }
     ) {
@@ -272,7 +273,7 @@ fun MainScreen(
                             vpnState = vpnState,
                             logs = logs,
                             onConnectClick = {
-                                if (vpnState == VpnState.CONNECTED || vpnState == VpnState.CONNECTING) {
+                                if (vpnState in listOf(VpnState.CONNECTED, VpnState.CONNECTING, VpnState.RECONNECTING)) {
                                     stopVpnService(context)
                                 } else {
                                     val vpnIntent = VpnService.prepare(context)
@@ -281,7 +282,7 @@ fun MainScreen(
                                         vpnPermissionLauncher.launch(vpnIntent)
                                     } else {
                                         selectedConfig?.let {
-                                            startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value)
+                                            startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value, autoReconnectState.value)
                                         }
                                     }
                                 }
@@ -309,11 +310,14 @@ fun HomeScreen(
     val (buttonColor, buttonText) = when (vpnState) {
         VpnState.CONNECTED -> Color(0xFF2E7D32) to "LIGADO"
         VpnState.CONNECTING -> Color(0xFFF9A825) to "A LIGAR..."
+        VpnState.RECONNECTING -> Color(0xFFFFA000) to "A RECONECTAR" // <-- NOVO ESTADO NA UI
         else -> Color(0xFFC62828) to "DESLIGADO"
     }
+    
+    val isConnecting = vpnState in listOf(VpnState.CONNECTING, VpnState.CONNECTED, VpnState.RECONNECTING)
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        ConfigSelector(selectedConfig, configurations, onConfigSelected, enabled = vpnState != VpnState.CONNECTED && vpnState != VpnState.CONNECTING)
+        ConfigSelector(selectedConfig, configurations, onConfigSelected, enabled = !isConnecting)
         Spacer(modifier = Modifier.weight(1.5f))
         Box(modifier = Modifier.padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
             Button(
@@ -508,7 +512,8 @@ fun TypeSelector(
 fun AppDrawerContent(
     sshCompression: Boolean, onSshCompressionChange: (Boolean) -> Unit,
     tcpNoDelay: Boolean, onTcpNoDelayChange: (Boolean) -> Unit,
-    keepAlive: Boolean, onKeepAliveChange: (Boolean) -> Unit
+    keepAlive: Boolean, onKeepAliveChange: (Boolean) -> Unit,
+    autoReconnect: Boolean, onAutoReconnectChange: (Boolean) -> Unit // <-- NOVOS PARÂMETROS
 ) {
     ModalDrawerSheet {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -516,6 +521,7 @@ fun AppDrawerContent(
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = sshCompression, onCheckedChange = onSshCompressionChange); Text("Compressão SSH") }
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = tcpNoDelay, onCheckedChange = onTcpNoDelayChange); Text("TCP No Delay") }
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = keepAlive, onCheckedChange = onKeepAliveChange); Text("KeepAlive") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = autoReconnect, onCheckedChange = onAutoReconnectChange); Text("Reconexão Automática") } // <-- NOVA CHECKBOX
         }
     }
 }
@@ -555,3 +561,4 @@ fun DefaultPreview() {
         DroidTunnelApp()
     }
 }
+
