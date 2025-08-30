@@ -17,19 +17,17 @@ class NatManager(private val vpnService: DroidTunnelVpnService, private val sock
     fun handlePacket(packet: Packet, vpnOutput: FileOutputStream) {
         val destAddress = packet.ipHeader.destinationAddress
         val destPort = packet.transportHeader.destinationPort
-        // Cria uma chave única para a sessão usando origem e destino
         val sessionKey = "${packet.ipHeader.sourceAddress.hostAddress}:${packet.transportHeader.sourcePort}-${destAddress.hostAddress}:$destPort"
 
         var channel = sessions[sessionKey]?.first
         if (channel == null || !channel.isConnected) {
             try {
                 channel = SocketChannel.open()
-                vpnService.protect(channel.socket()) // Protege o socket para não ser encaminhado pela própria VPN
+                vpnService.protect(channel.socket())
                 channel.connect(InetSocketAddress("127.0.0.1", socksPort))
                 
                 sessions[sessionKey] = Pair(channel, packet)
 
-                // Inicia uma nova thread para ler as respostas do túnel para esta sessão
                 executor.submit {
                     val buffer = ByteBuffer.allocate(32767)
                     try {
@@ -38,10 +36,8 @@ class NatManager(private val vpnService: DroidTunnelVpnService, private val sock
                             val responseData = ByteArray(buffer.remaining())
                             buffer.get(responseData)
                             
-                            // Constrói o pacote de resposta usando o pacote original
                             val responsePacket = IpPacketParser.buildIpPacket(packet, responseData)
                             
-                            // Escreve a resposta de volta na interface da VPN de forma segura
                             synchronized(vpnOutput) {
                                 vpnOutput.write(responsePacket)
                             }
@@ -62,7 +58,6 @@ class NatManager(private val vpnService: DroidTunnelVpnService, private val sock
         }
         
         try {
-            // Escreve os dados do pacote de saída para o túnel
             if (packet.data.hasRemaining()) {
                 channel.write(packet.data)
             }
