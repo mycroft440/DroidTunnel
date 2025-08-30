@@ -3,6 +3,8 @@ package com.example.droidtunnel
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -18,6 +20,18 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     private var tunnelThread: Thread? = null
     private val executor = Executors.newCachedThreadPool()
     private val isRunning = AtomicBoolean(false)
+    private var wasStoppedByUser = false
+
+    // --- LÓGICA DE RECONEXÃO ---
+    private var lastConfig: TunnelConfig? = null
+    private var lastUseCompression: Boolean = false
+    private var lastUseTcpNoDelay: Boolean = false
+    private var lastUseKeepAlive: Boolean = false
+    private var useAutoReconnect: Boolean = false
+    private val reconnectHandler = Handler(Looper.getMainLooper())
+    private var reconnectAttempts = 0
+    private val MAX_RECONNECT_ATTEMPTS = 5
+    private val RECONNECT_DELAY_MS = 5000L
 
     companion object {
         const val TAG = "DroidTunnelVpnService"
@@ -25,7 +39,6 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
             private set
     }
 
-    // Envia uma atualização de estado para a MainActivity.
     private fun sendStateBroadcast(state: VpnState, message: String? = null) {
         currentState = state
         val intent = Intent(VpnServiceState.ACTION_STATE_UPDATE).apply {
@@ -38,24 +51,29 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         if (action == "start" && !isRunning.getAndSet(true)) {
-            val config = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            wasStoppedByUser = false
+            reconnectAttempts = 0 // Reinicia as tentativas a cada nova ligação
+
+            lastConfig = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getSerializableExtra("CONFIG", TunnelConfig::class.java)
             } else {
                 @Suppress("DEPRECATION")
                 intent.getSerializableExtra("CONFIG") as? TunnelConfig
             }
             
-            val useCompression = intent.getBooleanExtra("USE_COMPRESSION", false)
-            val useTcpNoDelay = intent.getBooleanExtra("USE_TCP_NO_DELAY", true)
-            val useKeepAlive = intent.getBooleanExtra("USE_KEEP_ALIVE", true)
+            lastUseCompression = intent.getBooleanExtra("USE_COMPRESSION", false)
+            lastUseTcpNoDelay = intent.getBooleanExtra("USE_TCP_NO_DELAY", true)
+            lastUseKeepAlive = intent.getBooleanExtra("USE_KEEP_ALIVE", true)
+            useAutoReconnect = intent.getBooleanExtra("USE_AUTO_RECONNECT", true)
 
-            if (config != null) {
-                startVpn(config, useCompression, useTcpNoDelay, useKeepAlive)
+            if (lastConfig != null) {
+                startVpn(lastConfig!!, lastUseCompression, lastUseTcpNoDelay, lastUseKeepAlive)
             } else {
                 Log.e(TAG, "Configuração nula, a parar serviço.")
                 stopVpn("Configuração inválida.")
             }
         } else if (action == "stop") {
+            wasStoppedByUser = true
             stopVpn("Parado pelo utilizador.")
         }
         return START_NOT_STICKY
@@ -67,6 +85,9 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
         useTcpNoDelay: Boolean,
         useKeepAlive: Boolean
     ) {
+        // Para qualquer thread de reconexão anterior
+        reconnectHandler.removeCallbacksAndMessages(null)
+        
         tunnelThread = Thread(
             SshTunnel(config, this, useCompression, useTcpNoDelay, useKeepAlive),
             "SshTunnelThread"
@@ -75,6 +96,8 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
 
     private fun stopVpn(reason: String?) {
         if (!isRunning.getAndSet(false)) return
+
+        reconnectHandler.removeCallbacksAndMessages(null) // Cancela qualquer tentativa de reconexão pendente
 
         Log.d(TAG, "A parar a VPN... Razão: $reason")
         sendStateBroadcast(VpnState.DISCONNECTED, reason)
@@ -94,6 +117,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     }
 
     override fun onTunnelReady(port: Int) {
+        reconnectAttempts = 0 // Ligação bem sucedida, reinicia o contador
         Log.d(TAG, "Túnel pronto! A iniciar o encaminhamento de tráfego para a porta SOCKS local $port")
         sendStateBroadcast(VpnState.CONNECTING, "Túnel estabelecido. A configurar a rede...")
         
@@ -145,8 +169,32 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     }
 
     override fun onTunnelClosed(reason: String?) {
-        Log.d(TAG, "O túnel foi fechado, a parar o serviço VPN.")
-        stopVpn(reason)
+        try { vpnInterface?.close() } catch (e: IOException) {}
+        
+        if (wasStoppedByUser || !useAutoReconnect) {
+            Log.d(TAG, "O túnel foi fechado, a parar o serviço VPN.")
+            stopVpn(reason)
+        } else {
+            handleReconnect(reason)
+        }
+    }
+    
+    private fun handleReconnect(reason: String?) {
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts++
+            Log.d(TAG, "Ligação perdida. A tentar reconectar (tentativa $reconnectAttempts/$MAX_RECONNECT_ATTEMPTS)...")
+            val message = "$reason\nA tentar reconectar em ${RECONNECT_DELAY_MS / 1000}s... (tentativa $reconnectAttempts)"
+            sendStateBroadcast(VpnState.RECONNECTING, message)
+            
+            reconnectHandler.postDelayed({
+                lastConfig?.let {
+                    startVpn(it, lastUseCompression, lastUseTcpNoDelay, lastUseKeepAlive)
+                }
+            }, RECONNECT_DELAY_MS)
+        } else {
+            Log.e(TAG, "Máximo de tentativas de reconexão atingido. A desistir.")
+            stopVpn("Não foi possível reconectar. Verifique a sua ligação à internet.")
+        }
     }
 
     override fun onDestroy() {
@@ -154,3 +202,4 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
         stopVpn("Serviço destruído.")
     }
 }
+
