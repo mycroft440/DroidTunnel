@@ -3,6 +3,7 @@ package com.example.droidtunnel
 import android.util.Log
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Proxy
+import com.jcraft.jsch.ProxySOCKS5
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SocketFactory
 import java.io.InputStream
@@ -53,8 +54,16 @@ class SshTunnel(
             }
 
             if (config.proxyHost.isNotBlank() && config.proxyPort.isNotBlank()) {
-                session?.setProxy(HttpProxy(config))
-                Log.d(TAG, "Proxy HTTP configurado para ${config.proxyHost}:${config.proxyPort}")
+                when (config.connectionType) {
+                    SshConnectionType.SOCKS5 -> {
+                        session?.setProxy(ProxySOCKS5(config.proxyHost, config.proxyPort.toIntOrNull() ?: 1080))
+                        Log.d(TAG, "Proxy SOCKS5 configurado para ${config.proxyHost}:${config.proxyPort}")
+                    }
+                    else -> { // Para os tipos SSHPROXY
+                        session?.setProxy(HttpProxy(config))
+                        Log.d(TAG, "Proxy HTTP/WebSocket configurado para ${config.proxyHost}:${config.proxyPort}")
+                    }
+                }
             }
 
             Log.d(TAG, "A conectar-se ao servidor SSH...")
@@ -95,18 +104,87 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
 
     override fun connect(socketFactory: SocketFactory?, host: String?, port: Int, timeout: Int) {
         try {
-            val plainSocket = socketFactory?.createSocket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
-                ?: Socket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
+            // DETEÇÃO AUTOMÁTICA DE WEBSOCKET
+            val isWebSocket = config.payload.contains("Upgrade: websocket", ignoreCase = true)
+            val useSsl = config.connectionType in listOf(SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL)
 
-            if (config.connectionType in listOf(SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL)) {
-                Log.d(SshTunnel.TAG, "A iniciar ligação SSL para ${config.proxyHost} com SNI: ${config.sni}")
-                val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
-                val sslSocket = sslFactory.createSocket(plainSocket, config.proxyHost, config.proxyPort.toIntOrNull() ?: 80, true) as SSLSocket
-                if (config.sni.isNotBlank()) {
-                    val params = sslSocket.sslParameters
-                    params.serverNames = listOf(SNIHostName(config.sni))
-                    sslSocket.sslParameters = params
+            if (isWebSocket) {
+                Log.d(SshTunnel.TAG, "Detetada payload WebSocket. A iniciar ligação WebSocket...")
+                val webSocketSocket = WebSocketSocket(
+                    host = config.proxyHost,
+                    port = config.proxyPort.toIntOrNull() ?: (if (useSsl) 443 else 80),
+                    payload = config.payload,
+                    useSsl = useSsl,
+                    sni = config.sni
+                )
+                // A connect é chamada pela própria JSch, então apenas preparamos o socket
+                this.socket = webSocketSocket
+            } else {
+                 Log.d(SshTunnel.TAG, "Payload HTTP padrão. A iniciar ligação TCP...")
+                val plainSocket = socketFactory?.createSocket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
+                    ?: Socket(config.proxyHost, config.proxyPort.toIntOrNull() ?: 80)
+
+                if (useSsl) {
+                    Log.d(SshTunnel.TAG, "A iniciar ligação SSL para ${config.proxyHost} com SNI: ${config.sni}")
+                    val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+                    val sslSocket = sslFactory.createSocket(plainSocket, config.proxyHost, config.proxyPort.toIntOrNull() ?: 80, true) as SSLSocket
+                    if (config.sni.isNotBlank()) {
+                        val params = sslSocket.sslParameters
+                        params.serverNames = listOf(SNIHostName(config.sni))
+                        sslSocket.sslParameters = params
+                    }
+                    Log.d(SshTunnel.TAG, "A iniciar handshake SSL...")
+                    sslSocket.startHandshake()
+                    Log.d(SshTunnel.TAG, "Handshake SSL concluído com sucesso.")
+                    this.socket = sslSocket
+                } else {
+                    this.socket = plainSocket
                 }
+            }
+
+
+            this.socket?.soTimeout = timeout
+            // A ligação real (connect) é chamada pela JSch depois deste método retornar
+            // No entanto, para o nosso fluxo de payload HTTP, precisamos de fazer a escrita antes
+            if (!isWebSocket) {
+                 inputStream = this.socket?.getInputStream()
+                 outputStream = this.socket?.getOutputStream()
+                if (config.connectionType in listOf(SshConnectionType.SSHPROXY_PAYLOAD, SshConnectionType.SSHPROXY_PAYLOAD_SSL)) {
+                    val processedPayload = processPayload(config.payload, config.sshHost, config.sshPort)
+                    Log.d(SshTunnel.TAG, "Payload processada a ser enviada:\n$processedPayload")
+                    outputStream?.write(processedPayload.toByteArray())
+                    outputStream?.flush()
+                    val buffer = ByteArray(1024)
+                    val bytesRead = inputStream?.read(buffer)
+                    if (bytesRead != null && bytesRead > 0) {
+                        val response = String(buffer, 0, bytesRead)
+                        Log.d(SshTunnel.TAG, "Resposta do Proxy:\n$response")
+                        if (!response.contains(" 200 ")) {
+                            throw Exception("O Proxy recusou a ligação: $response")
+                        }
+                    } else {
+                        throw Exception("O Proxy não respondeu.")
+                    }
+                } else {
+                    Log.d(SshTunnel.TAG, "Ligação direta (SSL ou normal) estabelecida, a aguardar pelo SSH.")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(SshTunnel.TAG, "Erro ao conectar-se ao proxy: ${e.message}", e)
+            close()
+            throw e
+        }
+    }
+
+    override fun getInputStream(): InputStream? {
+        if(inputStream == null) inputStream = socket?.getInputStream()
+        return inputStream
+    }
+
+    override fun getOutputStream(): OutputStream? {
+         if(outputStream == null) outputStream = socket?.getOutputStream()
+        return outputStream
+    }
                 Log.d(SshTunnel.TAG, "A iniciar handshake SSL...")
                 sslSocket.startHandshake()
                 Log.d(SshTunnel.TAG, "Handshake SSL concluído com sucesso.")
@@ -163,4 +241,5 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
             .replace("\\r\\n", "\r\n")
     }
 }
+
 
