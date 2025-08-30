@@ -271,7 +271,7 @@ fun MainScreen(
     }
 }
 
-// --- Tela Inicial ---
+// --- Componentes da UI (Telas e Peças) ---
 
 @Composable
 fun HomeScreen(
@@ -311,7 +311,6 @@ fun HomeScreen(
     }
 }
 
-// --- Tela de Configurações ---
 @Composable
 fun ConfigScreen(
     configurations: List<TunnelConfig>,
@@ -348,7 +347,6 @@ fun ConfigScreen(
     }
 }
 
-// --- Tela de Adicionar/Editar ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditConfigScreen(
@@ -433,8 +431,6 @@ fun AddEditConfigScreen(
         }
     }
 }
-
-// --- Componentes Auxiliares ---
 
 @Composable
 fun TypeSelector(
