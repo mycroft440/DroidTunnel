@@ -5,6 +5,11 @@ package com.example.droidtunnel
  */
 interface TunnelListener {
     /**
+     * Chamado quando a ligação SSH está a ser estabelecida.
+     */
+    fun onTunnelConnecting()
+
+    /**
      * Chamado quando a ligação SSH está estabelecida e o proxy SOCKS local está pronto.
      * @param port A porta em que o proxy SOCKS está a ouvir.
      */
@@ -12,6 +17,7 @@ interface TunnelListener {
 
     /**
      * Chamado quando a ligação do túnel é fechada, seja por erro ou intencionalmente.
+     * @param reason A razão pela qual o túnel foi fechado.
      */
-    fun onTunnelClosed()
+    fun onTunnelClosed(reason: String?)
 }
