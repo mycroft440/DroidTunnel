@@ -28,6 +28,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     private var lastUseTcpNoDelay: Boolean = false
     private var lastUseKeepAlive: Boolean = false
     private var useAutoReconnect: Boolean = false
+    private var lastMtu: Int = 1400 // <-- GUARDA O ÚLTIMO VALOR DE MTU
     private val reconnectHandler = Handler(Looper.getMainLooper())
     private var reconnectAttempts = 0
     private val MAX_RECONNECT_ATTEMPTS = 5
@@ -52,7 +53,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
         val action = intent?.action
         if (action == "start" && !isRunning.getAndSet(true)) {
             wasStoppedByUser = false
-            reconnectAttempts = 0 // Reinicia as tentativas a cada nova ligação
+            reconnectAttempts = 0
 
             lastConfig = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getSerializableExtra("CONFIG", TunnelConfig::class.java)
@@ -65,6 +66,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
             lastUseTcpNoDelay = intent.getBooleanExtra("USE_TCP_NO_DELAY", true)
             lastUseKeepAlive = intent.getBooleanExtra("USE_KEEP_ALIVE", true)
             useAutoReconnect = intent.getBooleanExtra("USE_AUTO_RECONNECT", true)
+            lastMtu = intent.getIntExtra("MTU", 1400) // <-- RECEBE O VALOR DO MTU
 
             if (lastConfig != null) {
                 startVpn(lastConfig!!, lastUseCompression, lastUseTcpNoDelay, lastUseKeepAlive)
@@ -85,7 +87,6 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
         useTcpNoDelay: Boolean,
         useKeepAlive: Boolean
     ) {
-        // Para qualquer thread de reconexão anterior
         reconnectHandler.removeCallbacksAndMessages(null)
         
         tunnelThread = Thread(
@@ -97,7 +98,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     private fun stopVpn(reason: String?) {
         if (!isRunning.getAndSet(false)) return
 
-        reconnectHandler.removeCallbacksAndMessages(null) // Cancela qualquer tentativa de reconexão pendente
+        reconnectHandler.removeCallbacksAndMessages(null)
 
         Log.d(TAG, "A parar a VPN... Razão: $reason")
         sendStateBroadcast(VpnState.DISCONNECTED, reason)
@@ -117,7 +118,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     }
 
     override fun onTunnelReady(port: Int) {
-        reconnectAttempts = 0 // Ligação bem sucedida, reinicia o contador
+        reconnectAttempts = 0
         Log.d(TAG, "Túnel pronto! A iniciar o encaminhamento de tráfego para a porta SOCKS local $port")
         sendStateBroadcast(VpnState.CONNECTING, "Túnel estabelecido. A configurar a rede...")
         
@@ -126,6 +127,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
             .addAddress("10.8.0.1", 24)
             .addDnsServer("8.8.8.8")
             .addRoute("0.0.0.0", 0)
+            .setMtu(lastMtu) // <-- APLICA O VALOR DO MTU AQUI
 
         try {
             vpnInterface = builder.establish()
