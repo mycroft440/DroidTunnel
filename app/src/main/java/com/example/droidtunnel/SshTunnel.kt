@@ -15,7 +15,6 @@ import javax.net.ssl.SSLSocketFactory
 class SshTunnel(
     private val config: TunnelConfig,
     private val listener: TunnelListener,
-    // Novos parâmetros para as opções avançadas
     private val useCompression: Boolean,
     private val useTcpNoDelay: Boolean,
     private val useKeepAlive: Boolean
@@ -29,7 +28,9 @@ class SshTunnel(
     private var session: Session? = null
 
     override fun run() {
+        var closeReason: String? = "Ligação terminada."
         try {
+            listener.onTunnelConnecting()
             Log.d(TAG, "A iniciar a thread do túnel...")
 
             val jsch = JSch()
@@ -37,18 +38,15 @@ class SshTunnel(
             session?.setPassword(config.sshPassword)
             session?.setConfig("StrictHostKeyChecking", "no")
 
-            // --- APLICA AS NOVAS OPÇÕES AQUI ---
             if (useTcpNoDelay) {
                 session?.setConfig("TCP_NODELAY", "yes")
                 Log.d(TAG, "TCP NoDelay ativado.")
             }
             if (useKeepAlive) {
-                // Envia um pacote para manter a ligação viva a cada 30 segundos
                 session?.serverAliveInterval = 30 * 1000
                 Log.d(TAG, "KeepAlive ativado (intervalo de 30s).")
             }
             if (useCompression) {
-                // Ativa a compressão zlib
                 session?.setConfig("compression.s2c", "zlib@openssh.com,zlib,none")
                 session?.setConfig("compression.c2s", "zlib@openssh.com,zlib,none")
                 Log.d(TAG, "Compressão SSH ativada.")
@@ -71,15 +69,20 @@ class SshTunnel(
                 while (!Thread.currentThread().isInterrupted && session?.isConnected == true) {
                     Thread.sleep(1000)
                 }
+                if (Thread.currentThread().isInterrupted) {
+                    closeReason = "Parado pelo utilizador."
+                }
             } else {
-                Log.e(TAG, "Falha ao estabelecer a ligação SSH.")
+                 closeReason = "Falha ao conectar. Verifique as credenciais e o servidor."
+                 Log.e(TAG, closeReason)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Erro na ligação SSH: ${e.message}", e)
+            closeReason = e.message ?: "Erro desconhecido na ligação."
+            Log.e(TAG, "Erro na ligação SSH: $closeReason", e)
         } finally {
             Log.d(TAG, "A fechar a ligação SSH.")
             session?.disconnect()
-            listener.onTunnelClosed()
+            listener.onTunnelClosed(closeReason)
         }
     }
 }
@@ -160,4 +163,3 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
             .replace("\\r\\n", "\r\n")
     }
 }
-
