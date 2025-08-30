@@ -186,7 +186,7 @@ fun MainScreen(
     val tcpNoDelayState = remember { mutableStateOf(true) }
     val keepAliveState = remember { mutableStateOf(true) }
     val autoReconnectState = remember { mutableStateOf(true) }
-    val mtuState = remember { mutableStateOf(1400) } // <-- NOVO ESTADO PARA O MTU
+    val mtuState = remember { mutableStateOf(1500) } // <-- VALOR PADRÃO ATUALIZADO
 
     var vpnState by remember { mutableStateOf(DroidTunnelVpnService.currentState) }
     var logs by remember { mutableStateOf("Bem-vindo ao DroidTunnel!\n") }
@@ -578,4 +578,5 @@ fun DefaultPreview() {
         DroidTunnelApp()
     }
 }
+
 
