@@ -1,8 +1,10 @@
 package com.example.droidtunnel
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.VpnService
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -32,6 +34,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.example.droidtunnel.ui.theme.DroidTunnelTheme
 import kotlinx.coroutines.launch
 import java.io.Serializable
@@ -177,7 +180,9 @@ fun MainScreen(
     val sshCompressionState = remember { mutableStateOf(false) }
     val tcpNoDelayState = remember { mutableStateOf(true) }
     val keepAliveState = remember { mutableStateOf(true) }
-    var isConnected by remember { mutableStateOf(false) }
+    
+    // Estado da VPN e logs, agora controlados por broadcasts do serviço.
+    var vpnState by remember { mutableStateOf(DroidTunnelVpnService.currentState) }
     var logs by remember { mutableStateOf("Bem-vindo ao DroidTunnel!\n") }
     
     val context = LocalContext.current
@@ -186,19 +191,42 @@ fun MainScreen(
     val tabs = listOf("Início", "Configurações")
     val pagerState = rememberPagerState(pageCount = { tabs.size })
 
+    // Listener para o resultado do pedido de permissão de VPN
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            logs += "Permissão de VPN concedida. A iniciar ligação...\n"
             selectedConfig?.let {
                 startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value)
             }
-            isConnected = true
         } else {
             logs += "Erro: Permissão de VPN negada pelo utilizador.\n"
         }
     }
+
+    // Configura o BroadcastReceiver para ouvir atualizações do VpnService
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == VpnServiceState.ACTION_STATE_UPDATE) {
+                    val stateName = intent.getStringExtra(VpnServiceState.EXTRA_STATE)
+                    vpnState = stateName?.let { VpnState.valueOf(it) } ?: VpnState.IDLE
+                    
+                    val message = intent.getStringExtra(VpnServiceState.EXTRA_MESSAGE)
+                    if (message != null) {
+                        logs += "$message\n"
+                    }
+                }
+            }
+        }
+        LocalBroadcastManager.getInstance(context).registerReceiver(
+            receiver, IntentFilter(VpnServiceState.ACTION_STATE_UPDATE)
+        )
+        onDispose {
+            LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver)
+        }
+    }
+
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -241,24 +269,20 @@ fun MainScreen(
                             selectedConfig = selectedConfig,
                             configurations = configurations,
                             onConfigSelected = onConfigSelected,
-                            isConnected = isConnected,
+                            vpnState = vpnState,
                             logs = logs,
                             onConnectClick = {
-                                if (isConnected) {
+                                if (vpnState == VpnState.CONNECTED || vpnState == VpnState.CONNECTING) {
                                     stopVpnService(context)
-                                    logs += "A parar ligação...\n"
-                                    isConnected = false
                                 } else {
                                     val vpnIntent = VpnService.prepare(context)
                                     if (vpnIntent != null) {
                                         logs += "A solicitar permissão de VPN...\n"
                                         vpnPermissionLauncher.launch(vpnIntent)
                                     } else {
-                                        logs += "A iniciar ligação com '${selectedConfig?.name}'...\n"
                                         selectedConfig?.let {
                                             startVpnService(context, it, sshCompressionState.value, tcpNoDelayState.value, keepAliveState.value)
                                         }
-                                        isConnected = true
                                     }
                                 }
                             }
@@ -278,23 +302,29 @@ fun HomeScreen(
     selectedConfig: TunnelConfig?,
     configurations: List<TunnelConfig>,
     onConfigSelected: (TunnelConfig) -> Unit,
-    isConnected: Boolean,
+    vpnState: VpnState,
     logs: String,
     onConnectClick: () -> Unit
 ) {
+    val (buttonColor, buttonText) = when (vpnState) {
+        VpnState.CONNECTED -> Color(0xFF2E7D32) to "LIGADO"
+        VpnState.CONNECTING -> Color(0xFFF9A825) to "A LIGAR..."
+        else -> Color(0xFFC62828) to "DESLIGADO"
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        ConfigSelector(selectedConfig, configurations, onConfigSelected)
+        ConfigSelector(selectedConfig, configurations, onConfigSelected, enabled = vpnState != VpnState.CONNECTED && vpnState != VpnState.CONNECTING)
         Spacer(modifier = Modifier.weight(1.5f))
         Box(modifier = Modifier.padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
             Button(
                 onClick = onConnectClick,
                 modifier = Modifier.size(220.dp),
                 shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = if (isConnected) Color(0xFF2E7D32) else Color(0xFFC62828)),
+                colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp),
                 enabled = selectedConfig != null
             ) {
-                Text(text = if (isConnected) "LIGADO" else "DESLIGADO", style = MaterialTheme.typography.headlineMedium, color = Color.White, fontWeight = FontWeight.Bold)
+                Text(text = buttonText, style = MaterialTheme.typography.headlineMedium, color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
         Spacer(modifier = Modifier.weight(0.5f))
@@ -362,7 +392,7 @@ fun AddEditConfigScreen(
     var selectedType by remember { mutableStateOf(initialConfig?.connectionType ?: SshConnectionType.SSHPROXY_PAYLOAD) }
     var proxyHost by remember { mutableStateOf(initialConfig?.proxyHost ?: "") }
     var proxyPort by remember { mutableStateOf(initialConfig?.proxyPort ?: "") }
-    var payload by remember { mutableStateOf(initialConfig?.payload ?: "") }
+    var payload by remember { mutableStateOf(initialConfig?.payload ?: "CONNECT [host_port] [protocol][crlf]Host: [ssh_host][crlf][crlf]") }
     var sni by remember { mutableStateOf(initialConfig?.sni ?: "") }
     val isEditing = initialConfig != null
 
@@ -490,19 +520,24 @@ fun AppDrawerContent(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigSelector(
     selectedConfig: TunnelConfig?,
     configurations: List<TunnelConfig>,
     onConfigSelected: (TunnelConfig) -> Unit,
+    enabled: Boolean
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedCard(onClick = { if (configurations.isNotEmpty()) expanded = true }, modifier = Modifier.fillMaxWidth()) {
+        OutlinedCard(onClick = { if (configurations.isNotEmpty() && enabled) expanded = true }, modifier = Modifier.fillMaxWidth()) {
             Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(text = selectedConfig?.name ?: "Selecione uma Configuração", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                Text(
+                    text = selectedConfig?.name ?: "Selecione uma Configuração",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (enabled) LocalContentColor.current else Color.Gray
+                )
+                Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown", tint = if (enabled) LocalContentColor.current else Color.Gray)
             }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.fillMaxWidth(0.9f)) {
@@ -520,4 +555,3 @@ fun DefaultPreview() {
         DroidTunnelApp()
     }
 }
-
