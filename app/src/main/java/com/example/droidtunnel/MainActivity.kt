@@ -45,7 +45,8 @@ import kotlin.math.roundToInt
 enum class SshConnectionType(val displayName: String) {
     SSHPROXY_PAYLOAD("SSHPROXY+PAYLOAD"),
     SSHPROXY_PAYLOAD_SSL("SSHPROXY+PAYLOAD+SSL"),
-    SSHPROXY_SSL("SSHPROXY + SSL")
+    SSHPROXY_SSL("SSHPROXY + SSL"),
+    SOCKS5("SOCKS5") // NOVO TIPO
 }
 
 data class TunnelConfig(
@@ -456,9 +457,10 @@ fun AddEditConfigScreen(
             Text("Detalhes do Proxy/Payload", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(value = "SSH (Secure Shell)", onValueChange = {}, label = { Text("Protocolo") }, readOnly = true, modifier = Modifier.fillMaxWidth())
             TypeSelector(selectedType = selectedType, onTypeSelected = { selectedType = it })
-            if (selectedType in listOf(SshConnectionType.SSHPROXY_PAYLOAD, SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL)) {
+            // MOSTRAR CAMPOS DE PROXY PARA TODOS OS TIPOS, EXCETO LIGAÇÃO DIRETA (que não existe de momento)
+            if (selectedType in listOf(SshConnectionType.SSHPROXY_PAYLOAD, SshConnectionType.SSHPROXY_PAYLOAD_SSL, SshConnectionType.SSHPROXY_SSL, SshConnectionType.SOCKS5)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, label = { Text("Proxy Remoto") }, modifier = Modifier.weight(2f), singleLine = true)
+                    OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, label = { Text("Proxy/SOCKS Host") }, modifier = Modifier.weight(2f), singleLine = true)
                     OutlinedTextField(value = proxyPort, onValueChange = { proxyPort = it }, label = { Text("Porta") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                 }
             }
@@ -578,5 +580,6 @@ fun DefaultPreview() {
         DroidTunnelApp()
     }
 }
+
 
 
