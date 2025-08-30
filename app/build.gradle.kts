@@ -61,11 +61,14 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // --- NOVA DEPENDÊNCIA ADICIONADA ---
+    // --- CORREÇÃO: ADICIONADA A BIBLIOTECA MATERIAL COMPONENTS ---
+    // Esta dependência fornece os temas base em XML (como Theme.Material3)
+    implementation("com.google.android.material:material:1.11.0")
+
     // Biblioteca para a ligação SSH.
     implementation("com.jcraft:jsch:0.1.55")
 
-    // --- NOVA DEPENDÊNCIA ADICIONADA PARA WEBSOCKET ---
+    // Biblioteca para WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
