@@ -40,7 +40,8 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
+        // --- CORREÇÃO: Versão do compilador atualizada para ser compatível com Kotlin 1.9.20 ---
+        kotlinCompilerExtensionVersion = "1.5.3"
     }
     packaging {
         resources {
@@ -61,8 +62,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // --- CORREÇÃO: ADICIONADA A BIBLIOTECA MATERIAL COMPONENTS ---
-    // Esta dependência fornece os temas base em XML (como Theme.Material3)
+    // Biblioteca Material Components para temas base em XML
     implementation("com.google.android.material:material:1.11.0")
 
     // Biblioteca para a ligação SSH.
