@@ -28,7 +28,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
     private var lastUseTcpNoDelay: Boolean = false
     private var lastUseKeepAlive: Boolean = false
     private var useAutoReconnect: Boolean = false
-    private var lastMtu: Int = 1400 // <-- GUARDA O ÚLTIMO VALOR DE MTU
+    private var lastMtu: Int = 1500 // <-- GUARDA O ÚLTIMO VALOR DE MTU
     private val reconnectHandler = Handler(Looper.getMainLooper())
     private var reconnectAttempts = 0
     private val MAX_RECONNECT_ATTEMPTS = 5
@@ -66,7 +66,7 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
             lastUseTcpNoDelay = intent.getBooleanExtra("USE_TCP_NO_DELAY", true)
             lastUseKeepAlive = intent.getBooleanExtra("USE_KEEP_ALIVE", true)
             useAutoReconnect = intent.getBooleanExtra("USE_AUTO_RECONNECT", true)
-            lastMtu = intent.getIntExtra("MTU", 1400) // <-- RECEBE O VALOR DO MTU
+            lastMtu = intent.getIntExtra("MTU", 1500) // <-- RECEBE O VALOR DO MTU
 
             if (lastConfig != null) {
                 startVpn(lastConfig!!, lastUseCompression, lastUseTcpNoDelay, lastUseKeepAlive)
@@ -204,4 +204,5 @@ class DroidTunnelVpnService : VpnService(), TunnelListener {
         stopVpn("Serviço destruído.")
     }
 }
+
 
