@@ -61,12 +61,12 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // --- NOVA DEPENDÊNCIA ADICIONADA ---
     // Biblioteca para a ligação SSH.
     implementation("com.jcraft:jsch:0.1.55")
-    
-    // Biblioteca para comunicação local entre componentes da app (Serviço -> UI)
-    implementation("androidx.localbroadcastmanager:localbroadcastmanager:1.1.0")
 
+    // --- NOVA DEPENDÊNCIA ADICIONADA PARA WEBSOCKET ---
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
@@ -76,3 +76,4 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
