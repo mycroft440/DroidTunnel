@@ -77,7 +77,7 @@ class SshTunnel(
                  Log.e(TAG, closeReason)
             }
         } catch (e: Exception) {
-            closeReason = e.message ?: "Erro desconhecido na ligação."
+            closeReason = ErrorMessageHandler.translate(e) // <-- MENSAGEM DE ERRO MELHORADA
             Log.e(TAG, "Erro na ligação SSH: $closeReason", e)
         } finally {
             Log.d(TAG, "A fechar a ligação SSH.")
@@ -163,3 +163,4 @@ private class HttpProxy(private val config: TunnelConfig) : Proxy {
             .replace("\\r\\n", "\r\n")
     }
 }
+
