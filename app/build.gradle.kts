@@ -31,7 +31,6 @@ android {
     }
 
     compileOptions {
-        // Mantém compatível com a configuração do projeto
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
@@ -43,8 +42,9 @@ android {
         compose = true
     }
     composeOptions {
-        // Alinhado com Kotlin 1.9.20 (1.5.4/1.5.5 são compatíveis):contentReference[oaicite:3]{index=3}
-        kotlinCompilerExtensionVersion = "1.5.5"
+        // A versão do compilador do Kotlin deve ser compatível com a versão do Kotlin
+        // e do Jetpack Compose. A versão 1.5.10 é recomendada para Kotlin 1.9.22+.
+        kotlinCompilerExtensionVersion = "1.5.10"
     }
 
     packaging {
@@ -56,38 +56,36 @@ android {
 
 dependencies {
 
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
-    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.core:core-ktx:1.13.1") // Atualizado
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0") // Atualizado
+    implementation("androidx.activity:activity-compose:1.9.0") // Atualizado
 
-    // BOM fixa versões coordenadas do Compose
-    implementation(platform("androidx.compose:compose-bom:2023.08.00"))
+    // BOM (Bill of Materials) para o Compose, atualizado para a versão estável mais recente
+    val composeBomVersion = "2024.05.00" // A pesquisa indica esta como a versão estável mais recente
+    implementation(platform("androidx.compose:compose-bom:$composeBomVersion"))
 
-    // UI Compose
+    // UI Compose (sem especificar versões, pois são geridas pela BOM)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-
-    // ===== ADIÇÕES para compilar o projeto =====
-    // Fundamentos do Compose (LazyColumn, Pager experimental etc.)
     implementation("androidx.compose.foundation:foundation")
-    // Ícones (Icons.Default.*)
     implementation("androidx.compose.material:material-icons-extended")
-    // LocalBroadcastManager usado pelo serviço
-    implementation("androidx.localbroadcastmanager:localbroadcastmanager:1.1.0")
-    // ===========================================
 
-    // Outras libs já usadas no código
+    // Dependência necessária para LocalBroadcastManager
+    implementation("androidx.localbroadcastmanager:localbroadcastmanager:1.1.0")
+
+    // Outras dependências do projeto
     implementation("com.google.code.gson:gson:2.10.1")
-    implementation("com.google.android.material:material:1.11.0")
+    implementation("com.google.android.material:material:1.12.0") // Atualizado
     implementation("com.jcraft:jsch:0.1.55")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // Dependências de Teste
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2023.08.00"))
+    androidTestImplementation(platform("androidx.compose:compose-bom:$composeBomVersion"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
